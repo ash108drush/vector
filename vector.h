@@ -4,7 +4,9 @@
 #include <new>
 #include <utility>
 #include <memory>
-
+#include <algorithm>
+#include <iterator>
+#include <iostream>
 template <typename T>
 class RawMemory {
 public:
@@ -91,15 +93,116 @@ public:
     using iterator = T*;
     using const_iterator = const T*;
 
-    iterator begin() noexcept;
-    iterator end() noexcept;
-    const_iterator begin() const noexcept;
-    const_iterator end() const noexcept;
-    const_iterator cbegin() const noexcept;
-    const_iterator cend() const noexcept;
+    iterator begin() noexcept {
+        return data_.GetAddress();
+    };
+    iterator end() noexcept{
+        return data_.GetAddress() + size_;
+    };
+    const_iterator begin() const noexcept{
+        return data_.GetAddress();
+    };
+    const_iterator end() const noexcept{
+        return data_.GetAddress() + size_;
+    };
+    const_iterator cbegin() const noexcept{
+        return begin();
+    }
+    const_iterator cend() const noexcept{
+        return end();
+    };
 
-    iterator Insert(const_iterator pos, const T& value);
-    iterator Insert(const_iterator pos, T&& value);
+    template <typename... Args>
+    iterator Emplace(const_iterator pos, Args&&... args){
+
+        size_t capacity = Capacity();
+        const size_t index = pos - begin();
+
+        if(index == size_){
+            EmplaceBack(std::forward<Args>(args)...);
+            return end() - 1;
+        }
+
+
+
+
+        if (size_ + 1 <= capacity) {
+           // RawMemory<T> tmp_data(sizeof(T) * sizeof...(args));
+           // new (tmp_data.GetAddress()) T(std::forward<Args>(args)...);
+            //T* tmp_ptr = reinterpret_cast<T*>(tmp_data.GetAddress());
+            new (end()) T(std::move(*(end() - 1)));
+            std::move_backward( begin() + index, end() - 1, end());
+            std::destroy_at(begin() + index);
+            new(data_ + index) T(std::forward<Args>(args)...);
+            ++size_;
+            return data_.GetAddress() + index;
+        }
+
+        size_t new_capacity = size_ == 0 ? 1 : size_ * 2;
+        RawMemory<T> new_data(new_capacity);
+
+        // Конструируем новый элемент
+        new (new_data.GetAddress() + index) T(std::forward<Args>(args)...);
+
+        size_t constructed = 1; // новый элемент сконструирован
+
+        try {
+            // Копируем элементы до index
+            if constexpr (std::is_nothrow_move_constructible_v<T>) {
+                std::uninitialized_move_n(data_.GetAddress(), index,
+                                          new_data.GetAddress());
+            } else if constexpr (std::is_copy_constructible_v<T>) {
+                std::uninitialized_copy_n(data_.GetAddress(), index,
+                                          new_data.GetAddress());
+            } else {
+                std::uninitialized_move_n(data_.GetAddress(), index,
+                                          new_data.GetAddress());
+            }
+            constructed += index;
+
+            // Копируем элементы после index
+            if constexpr (std::is_nothrow_move_constructible_v<T>) {
+                std::uninitialized_move_n(data_.GetAddress() + index, size_ - index,
+                                          new_data.GetAddress() + index + 1);
+            } else if constexpr (std::is_copy_constructible_v<T>) {
+                std::uninitialized_copy_n(data_.GetAddress() + index, size_ - index,
+                                          new_data.GetAddress() + index + 1);
+            } else {
+                std::uninitialized_move_n(data_.GetAddress() + index, size_ - index,
+                                          new_data.GetAddress() + index + 1);
+            }
+            constructed += (size_ - index);
+        } catch(...) {
+            // Откат: уничтожаем всё, что успели сконструировать
+            std::destroy_n(new_data.GetAddress(), constructed);
+            throw;
+        }
+
+        // Уничтожаем старые данные
+        std::destroy_n(data_.GetAddress(), size_);
+        data_.Swap(new_data);
+        ++size_;
+
+        return data_.GetAddress() + index;
+  };
+
+    iterator Erase(const_iterator pos){ /*noexcept(std::is_nothrow_move_assignable_v<T>)*/;
+        size_t new_item_offset = pos - cbegin();
+        iterator mutable_pos = begin() + new_item_offset;
+        std::move(mutable_pos + 1, end(), mutable_pos);
+
+        mutable_pos->~T();
+
+        size_--;
+        return mutable_pos;
+    }
+
+    iterator Insert(const_iterator pos, const T& value){
+        return Emplace(pos,value);
+    };
+    iterator Insert(const_iterator pos, T&& value){
+        return Emplace(pos,std::move(value));
+    };
 
     explicit Vector(size_t size)
         : data_(size),

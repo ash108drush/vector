@@ -1,10 +1,9 @@
-#include <iostream>
-
 #include "vector.h"
 
 #include <iostream>
 #include <stdexcept>
 #include <string>
+#include <vector>
 
 namespace {
 
@@ -64,8 +63,21 @@ struct Obj {
         ++num_moved;
     }
 
-    Obj& operator=(const Obj& other) = default;
-    Obj& operator=(Obj&& other) = default;
+    Obj& operator=(const Obj& other) {
+        if (this != &other) {
+            id = other.id;
+            name = other.name;
+            ++num_assigned;
+        }
+        return *this;
+    }
+
+    Obj& operator=(Obj&& other) noexcept {
+        id = other.id;
+        name = std::move(other.name);
+        ++num_move_assigned;
+        return *this;
+    }
 
     ~Obj() {
         ++num_destroyed;
@@ -85,6 +97,8 @@ struct Obj {
         num_destroyed = 0;
         num_constructed_with_id = 0;
         num_constructed_with_id_and_name = 0;
+        num_assigned = 0;
+        num_move_assigned = 0;
     }
 
     bool throw_on_copy = false;
@@ -98,6 +112,8 @@ struct Obj {
     static inline int num_copied = 0;
     static inline int num_moved = 0;
     static inline int num_destroyed = 0;
+    static inline int num_assigned = 0;
+    static inline int num_move_assigned = 0;
 };
 
 }  // namespace
@@ -339,7 +355,7 @@ void Test4() {
         Vector<TestObj> v(1);
         assert(v.Size() == v.Capacity());
         // Операция PushBack существующего элемента вектора должна быть безопасна
-        // даже при реаллокации памии
+        // даже при реаллокации памяти
         v.PushBack(v[0]);
         assert(v[0].IsAlive());
         assert(v[1].IsAlive());
@@ -382,13 +398,271 @@ void Test5() {
     }
 }
 
+void Test6() {
+    using namespace std::literals;
+    const size_t SIZE = 10;
+    const int ID = 42;
+/*
+    {
+        Obj::ResetCounters();
+        Vector<int> v(SIZE);
+        const auto& cv(v);
+        v.PushBack(1);
+        assert(&*v.begin() == &v[0]);
+        *v.begin() = 2;
+        assert(v[0] == 2);
+        assert(v.end() - v.begin() == static_cast<std::ptrdiff_t>(v.Size()));
+        assert(v.begin() == cv.begin());
+        assert(v.end() == cv.end());
+        assert(v.cbegin() == cv.begin());
+        assert(v.cend() == cv.end());
+    }
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v{SIZE};
+        Obj obj{1};
+        Vector<Obj>::iterator pos = v.Insert(v.cbegin() + 1, obj);
+        assert(v.Size() == SIZE + 1);
+        assert(v.Capacity() == SIZE * 2);
+        assert(&*pos == &v[1]);
+        assert(v[1].id == obj.id);
+        assert(Obj::num_copied == 1);
+        assert(Obj::num_default_constructed == SIZE);
+       // std::cout << "size" << SIZE << "Alive obj" << Obj::GetAliveObjectCount() << std::endl;
+       // std::cout << "siz:" << SIZE +2 << " equal?" << Obj::GetAliveObjectCount() << std::endl;
+        assert(Obj::GetAliveObjectCount() == SIZE + 2);
+    }
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v;
+        auto* pos = v.Emplace(v.end(), Obj{1});
+        //std::cout << "size" << v.Size() << std::endl;
+        assert(v.Size() == 1);
+        assert(v.Capacity() >= v.Size());
+        assert(&*pos == &v[0]);
+        assert(Obj::num_moved == 1);
+        assert(Obj::num_constructed_with_id == 1);
+        assert(Obj::num_copied == 0);
+        assert(Obj::num_assigned == 0);
+        assert(Obj::num_move_assigned == 0);
+        assert(Obj::GetAliveObjectCount() == 1);
+    }
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v;
+        v.Reserve(SIZE);
+        auto* pos = v.Emplace(v.end(), Obj{1});
+        assert(v.Size() == 1);
+        assert(v.Capacity() >= v.Size());
+        assert(&*pos == &v[0]);
+        assert(Obj::num_moved == 1);
+        assert(Obj::num_constructed_with_id == 1);
+        assert(Obj::num_copied == 0);
+        assert(Obj::num_assigned == 0);
+        assert(Obj::num_move_assigned == 0);
+        assert(Obj::GetAliveObjectCount() == 1);
+    }
+
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v{SIZE};
+        //std::cout << "size" << v.Size() << "capacity" << v.Capacity() << std::endl;
+        Vector<Obj>::iterator pos = v.Insert(v.cbegin() + 1, Obj{1});
+        assert(v.Size() == SIZE + 1);
+        assert(v.Capacity() == SIZE * 2);
+        assert(&*pos == &v[1]);
+        assert(v[1].id == 1);
+
+       // std::cout << Obj::num_moved  << std::endl;
+     //   std::cout << Obj::num_copied  << std::endl;
+     //   std::cout << Obj::num_default_constructed  << std::endl;
+    //    std::cout << Obj::GetAliveObjectCount()  << std::endl;
+        assert(Obj::num_copied == 0);
+        assert(Obj::num_default_constructed == SIZE);
+        assert(Obj::GetAliveObjectCount() == SIZE + 1);
+    }
+    {
+        Vector<TestObj> v{SIZE};
+        v.Insert(v.cbegin() + 2, v[0]);
+        assert(std::all_of(v.begin(), v.end(), [](const TestObj& obj) {
+            return obj.IsAlive();
+        }));
+    }
+    {
+        Vector<TestObj> v{SIZE};
+        v.Insert(v.cbegin() + 2, std::move(v[0]));
+        assert(std::all_of(v.begin(), v.end(), [](const TestObj& obj) {
+            return obj.IsAlive();
+        }));
+    }
+    {
+        Vector<TestObj> v{SIZE};
+        v.Emplace(v.cbegin() + 2, std::move(v[0]));
+        assert(std::all_of(v.begin(), v.end(), [](const TestObj& obj) {
+            return obj.IsAlive();
+        }));
+    }
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v{SIZE};
+        auto* pos = v.Emplace(v.cbegin() + 1, ID, "Ivan"s);
+        assert(v.Size() == SIZE + 1);
+        assert(v.Capacity() == SIZE * 2);
+        assert(&*pos == &v[1]);
+        assert(v[1].id == ID);
+        assert(v[1].name == "Ivan"s);
+        assert(Obj::num_copied == 0);
+        assert(Obj::num_default_constructed == SIZE);
+        assert(Obj::num_moved == SIZE);
+        assert(Obj::num_move_assigned == 0);
+        assert(Obj::num_assigned == 0);
+        assert(Obj::GetAliveObjectCount() == SIZE + 1);
+    }
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v{SIZE};
+        auto* pos = v.Emplace(v.cbegin() + v.Size(), ID, "Ivan"s);
+        assert(v.Size() == SIZE + 1);
+        assert(v.Capacity() == SIZE * 2);
+        assert(&*pos == &v[SIZE]);
+        assert(v[SIZE].id == ID);
+        assert(v[SIZE].name == "Ivan"s);
+        assert(Obj::num_copied == 0);
+        assert(Obj::num_default_constructed == SIZE);
+        assert(Obj::num_moved == SIZE);
+        assert(Obj::num_move_assigned == 0);
+        assert(Obj::num_assigned == 0);
+        assert(Obj::GetAliveObjectCount() == SIZE + 1);
+    }
+    */
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v{SIZE};
+        v.Reserve(SIZE * 2);
+        const int old_num_moved = Obj::num_moved;
+        assert(v.Capacity() == SIZE * 2);
+
+        auto* pos = v.Emplace(v.cbegin() + 3, ID, "Ivan"s);
+        assert(v.Size() == SIZE + 1);
+        assert(&*pos == &v[3]);
+        assert(v[3].id == ID);
+        std::cout << v[3].id << std::endl;
+        assert(v[3].name == "Ivan");
+        assert(Obj::num_copied == 0);
+        assert(Obj::num_default_constructed == SIZE);
+        assert(Obj::num_constructed_with_id_and_name == 1);
+        assert(Obj::num_moved == old_num_moved + 1);
+        std::cout << Obj::num_move_assigned << "eq:" <<SIZE - 3 << std::endl;
+        assert(Obj::num_move_assigned == SIZE - 3);
+        assert(Obj::num_assigned == 0);
+    }
+    {
+        Obj::ResetCounters();
+        Vector<Obj> v{SIZE};
+        v[2].id = ID;
+        auto* pos = v.Erase(v.cbegin() + 1);
+        assert((pos - v.begin()) == 1);
+        assert(v.Size() == SIZE - 1);
+        assert(v.Capacity() == SIZE);
+        assert(pos->id == ID);
+        assert(Obj::num_copied == 0);
+        assert(Obj::num_assigned == 0);
+        assert(Obj::num_move_assigned == SIZE - 2);
+        assert(Obj::num_moved == 0);
+        assert(Obj::GetAliveObjectCount() == SIZE - 1);
+    }
+}
+
+struct C {
+    C() noexcept {
+        ++def_ctor;
+    }
+    C(const C& /*other*/) noexcept {
+        ++copy_ctor;
+    }
+    C(C&& /*other*/) noexcept {
+        ++move_ctor;
+    }
+    C& operator=(const C& other) noexcept {
+        if (this != &other) {
+            ++copy_assign;
+        }
+        return *this;
+    }
+    C& operator=(C&& /*other*/) noexcept {
+        ++move_assign;
+        return *this;
+    }
+    ~C() {
+        ++dtor;
+    }
+
+    static void Reset() {
+        def_ctor = 0;
+        copy_ctor = 0;
+        move_ctor = 0;
+        copy_assign = 0;
+        move_assign = 0;
+        dtor = 0;
+    }
+
+    inline static size_t def_ctor = 0;
+    inline static size_t copy_ctor = 0;
+    inline static size_t move_ctor = 0;
+    inline static size_t copy_assign = 0;
+    inline static size_t move_assign = 0;
+    inline static size_t dtor = 0;
+};
+
+void Dump() {
+    using namespace std;
+    cerr << "Def ctors: "sv << C::def_ctor              //
+         << ", Copy ctors: "sv << C::copy_ctor          //
+         << ", Move ctors: "sv << C::move_ctor          //
+         << ", Copy assignments: "sv << C::copy_assign  //
+         << ", Move assignments: "sv << C::move_assign  //
+         << ", Dtors: "sv << C::dtor << endl;
+}
+
+void Benchmark() {
+    using namespace std;
+    try {
+        const size_t NUM = 10;
+        C c;
+        {
+            cerr << "std::vector:"sv << endl;
+            C::Reset();
+            vector<C> v(NUM);
+            Dump();
+            v.push_back(c);
+        }
+        Dump();
+    } catch (...) {
+    }
+    try {
+        const size_t NUM = 10;
+        C c;
+        {
+            cerr << "Vector:"sv << endl;
+            C::Reset();
+            Vector<C> v(NUM);
+            Dump();
+            v.PushBack(c);
+        }
+        Dump();
+    } catch (...) {
+    }
+}
+
 int main() {
     try {
-        Test1();
-        Test2();
-        Test3();
-        Test4();
-        Test5();
+  //   Test1();
+ //     Test2();
+ //       Test3();
+ //     Test4();
+//       Test5();
+        Test6();
+        Benchmark();
     } catch (const std::exception& e) {
         std::cerr << e.what() << std::endl;
     }
