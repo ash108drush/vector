@@ -123,17 +123,11 @@ public:
             return end() - 1;
         }
 
-
-
-
         if (size_ + 1 <= capacity) {
-           // RawMemory<T> tmp_data(sizeof(T) * sizeof...(args));
-           // new (tmp_data.GetAddress()) T(std::forward<Args>(args)...);
-            //T* tmp_ptr = reinterpret_cast<T*>(tmp_data.GetAddress());
+            T temp_data(std::forward<Args>(args)...);
             new (end()) T(std::move(*(end() - 1)));
             std::move_backward( begin() + index, end() - 1, end());
-            std::destroy_at(begin() + index);
-            new(data_ + index) T(std::forward<Args>(args)...);
+            *(begin() + index) = std::move(temp_data);
             ++size_;
             return data_.GetAddress() + index;
         }
@@ -187,11 +181,11 @@ public:
   };
 
     iterator Erase(const_iterator pos){ /*noexcept(std::is_nothrow_move_assignable_v<T>)*/;
-        size_t new_item_offset = pos - cbegin();
-        iterator mutable_pos = begin() + new_item_offset;
+        size_t index = pos - cbegin();
+        iterator mutable_pos = begin() + index;
         std::move(mutable_pos + 1, end(), mutable_pos);
 
-        mutable_pos->~T();
+        (end() - 1)->~T();
 
         size_--;
         return mutable_pos;
