@@ -207,8 +207,7 @@ public:
 
     explicit Vector(size_t size)
         : data_(size),
-        size_(size)
-    {
+        size_(size){
         std::uninitialized_value_construct_n(data_.GetAddress(),size);
     }
 
@@ -216,7 +215,6 @@ public:
     Vector(const Vector& other)
         : data_(other.size_)
         , size_(other.size_) {
-
       std::uninitialized_copy_n(other.data_.GetAddress(),other.Size(),data_.GetAddress());
     }
 
